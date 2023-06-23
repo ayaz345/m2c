@@ -63,15 +63,7 @@ class AsmDataEntry:
 
     def size_range_bytes(self) -> Tuple[int, int]:
         """Return the range of possible sizes, if padding were stripped."""
-        # TODO: The data address could be used to only strip padding
-        # that ends on 16-byte boundaries and is at the end of a section
-        max_size = 0
-        for x in self.data:
-            if isinstance(x, str):
-                max_size += 4
-            else:
-                max_size += len(x)
-
+        max_size = sum(4 if isinstance(x, str) else len(x) for x in self.data)
         padding_size = 0
         if self.data and isinstance(self.data[-1], bytes):
             assert len(self.data) == 1 or isinstance(self.data[-2], str)
@@ -100,7 +92,7 @@ class AsmData:
             other.mentioned_labels.add(label)
 
     def is_likely_char(self, c: int) -> bool:
-        return 0x20 <= c < 0x7F or c in (0, 7, 8, 9, 10, 13, 27)
+        return 0x20 <= c < 0x7F or c in {0, 7, 8, 9, 10, 13, 27}
 
     def detect_heuristic_strings(self) -> None:
         for ent in self.values.values():
@@ -194,11 +186,7 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
     while i < len(line):
         c = line[i]
         i += 1
-        if not in_quote:
-            if c == '"':
-                in_quote = True
-                num_parts += 1
-        else:
+        if in_quote:
             if c == '"':
                 in_quote = False
                 if z:
@@ -208,9 +196,7 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
                 ret.append(c.encode("utf-8"))
                 continue
             if i == len(line):
-                raise DecompFailure(
-                    "backslash at end of .ascii line not supported: " + line
-                )
+                raise DecompFailure(f"backslash at end of .ascii line not supported: {line}")
             c = line[i]
             i += 1
             char_escapes = {
@@ -226,7 +212,7 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
             elif c == "x":
                 # hex literal, consume any number of hex chars, possibly none
                 value = 0
-                while i < len(line) and line[i] in digits + "abcdefABCDEF":
+                while i < len(line) and line[i] in f"{digits}abcdefABCDEF":
                     value = value * 16 + int(line[i], 16)
                     i += 1
                 ret.append(bytes([value & 0xFF]))
@@ -243,10 +229,13 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
             else:
                 ret.append(c.encode("utf-8"))
 
+        elif c == '"':
+            in_quote = True
+            num_parts += 1
     if in_quote:
-        raise DecompFailure("unterminated string literal: " + line)
+        raise DecompFailure(f"unterminated string literal: {line}")
     if num_parts == 0:
-        raise DecompFailure(".ascii with no string: " + line)
+        raise DecompFailure(f".ascii with no string: {line}")
     return b"".join(ret)
 
 
@@ -321,10 +310,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/#; \t":
-            return " "
-        else:
-            return s
+        return " " if s[0] in "/#; \t" else s
 
     re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
@@ -344,9 +330,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     def parse_int(w: str) -> int:
         var_value = defines.get(w)
-        if var_value is not None:
-            return var_value
-        return int(w, 0)
+        return var_value if var_value is not None else int(w, 0)
 
     for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
@@ -390,11 +374,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             if not g:
                 break
 
-            label = g.group(1) or g.group(2)
+            label = g[1] or g[2]
             if ifdef_level == 0:
                 process_label(label, glabel=None)
 
-            line = line[len(g.group(0)) :].strip()
+            line = line[len(g[0]):].strip()
 
         if not line:
             continue
@@ -408,7 +392,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         directive = line.split()[0]
         if directive.startswith("."):
             # Assembler directive.
-            if directive == ".ifdef" or directive == ".ifndef":
+            if directive in [".ifdef", ".ifndef"]:
                 macro_name = line.split()[1]
                 if macro_name not in defines:
                     defines[macro_name] = None
@@ -458,11 +442,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         curr_section = ".data"
                     elif curr_section.startswith(".text"):
                         curr_section = ".text"
-                elif (
-                    directive == ".rdata"
-                    or directive == ".rodata"
-                    or directive == ".late_rodata"
-                ):
+                elif directive in [".rdata", ".rodata", ".late_rodata"]:
                     curr_section = ".rodata"
                 elif directive == ".data":
                     curr_section = ".data"

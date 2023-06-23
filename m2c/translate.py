@@ -271,21 +271,17 @@ class StackInfo:
     def in_subroutine_arg_region(self, location: int) -> bool:
         if self.global_info.arch.arch == Target.ArchEnum.PPC:
             return False
-        if self.is_leaf:
-            return False
-        return location < self.subroutine_arg_top
+        return False if self.is_leaf else location < self.subroutine_arg_top
 
     def in_callee_save_reg_region(self, location: int) -> bool:
         lower_bound, upper_bound = self.callee_save_reg_region
         if lower_bound <= location < upper_bound:
             return True
         # PPC saves LR in the header of the previous stack frame
-        if (
+        return (
             self.global_info.arch.arch == Target.ArchEnum.PPC
             and location == self.allocated_stack_size + 4
-        ):
-            return True
-        return False
+        )
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
@@ -374,7 +370,7 @@ class StackInfo:
         return self.unique_type_map[key]
 
     def saved_reg_symbol(self, reg_name: str) -> "GlobalSymbol":
-        sym_name = "saved_reg_" + reg_name
+        sym_name = f"saved_reg_{reg_name}"
         type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
         return GlobalSymbol(symbol_name=sym_name, type=type)
 
@@ -384,11 +380,9 @@ class StackInfo:
             expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
         ):
             return True
-        if isinstance(expr, PassedInArg) and (
+        return isinstance(expr, PassedInArg) and (
             offset is None or offset == self.allocated_stack_size + expr.value
-        ):
-            return True
-        return False
+        )
 
     def get_stack_var(self, location: int, *, store: bool) -> "Expression":
         # See `get_stack_info` for explanation
@@ -430,13 +424,7 @@ class StackInfo:
                     # This marker is only used to annotate the output
                     self.weak_stack_var_locations.add(location)
 
-                if store:
-                    # If there's already been a store to `location`, then return a fresh type
-                    field_type = Type.any_field()
-                else:
-                    # Use the type of the last store instead of the one from `get_deref_field()`
-                    field_type = previous_stored_type
-
+                field_type = Type.any_field() if store else previous_stored_type
             # Track the type last stored at `location`
             if store:
                 self.weak_stack_var_types[location] = field_type
@@ -681,18 +669,17 @@ def get_stack_info(
     stack_struct = global_info.typepool.get_struct_by_tag_name(
         stack_struct_name, global_info.typemap
     )
-    if stack_struct is not None:
-        if stack_struct.size != info.allocated_stack_size:
-            raise DecompFailure(
-                f"Function {function.name} has a provided stack type {stack_struct_name} "
-                f"with size {stack_struct.size}, but the detected stack size was "
-                f"{info.allocated_stack_size}."
-            )
-    else:
+    if stack_struct is None:
         stack_struct = StructDeclaration.unknown(
             global_info.typepool,
             size=info.allocated_stack_size,
             tag_name=stack_struct_name,
+        )
+    elif stack_struct.size != info.allocated_stack_size:
+        raise DecompFailure(
+            f"Function {function.name} has a provided stack type {stack_struct_name} "
+            f"with size {stack_struct.size}, but the detected stack size was "
+            f"{info.allocated_stack_size}."
         )
     # Mark the struct as a stack struct so we never try to use a reference to the struct itself
     stack_struct.is_stack = True
@@ -723,9 +710,7 @@ def escape_byte(b: int) -> bytes:
     bs = bytes([b])
     if bs in table:
         return table[bs]
-    if b < 0x20 or b in (0xFF, 0x7F):
-        return f"\\x{b:02x}".encode("ascii")
-    return bs
+    return f"\\x{b:02x}".encode("ascii") if b < 0x20 or b in {0xFF, 0x7F} else bs
 
 
 @dataclass(eq=False)
@@ -779,7 +764,7 @@ class Expression(abc.ABC):
         depending on when this is called, e.g. because of EvalOnceExpr state.
         To avoid using it by accident, output is quoted."""
         fmt = Formatter(debug=True)
-        return '"' + self.format(fmt) + '"'
+        return f'"{self.format(fmt)}"'
 
 
 class Condition(Expression):
@@ -802,7 +787,7 @@ class Statement(abc.ABC):
         depending on when this is called, e.g. because of EvalOnceExpr state.
         To avoid using it by accident, output is quoted."""
         fmt = Formatter(debug=True)
-        return '"' + self.format(fmt) + '"'
+        return f'"{self.format(fmt)}"'
 
 
 @dataclass(frozen=True, eq=False)
@@ -817,9 +802,7 @@ class ErrorExpr(Condition):
         return self
 
     def format(self, fmt: Formatter) -> str:
-        if self.desc is not None:
-            return f"M2C_ERROR(/* {self.desc} */)"
-        return "M2C_ERROR()"
+        return "M2C_ERROR()" if self.desc is None else f"M2C_ERROR(/* {self.desc} */)"
 
 
 @dataclass(frozen=True)
@@ -1044,13 +1027,11 @@ class BinaryOp(Condition):
         ):
             if self.op == "+":
                 neg = Literal(value=-right_expr.value, type=right_expr.type)
-                sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
-                return sub
+                return BinaryOp(op="-", left=self.left, right=neg, type=self.type)
             if self.op in ("&", "|"):
                 neg = Literal(value=~right_expr.value, type=right_expr.type)
                 right = UnaryOp("~", neg, type=Type.any_reg())
-                expr = BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
-                return expr
+                return BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
         return self
 
     def format(self, fmt: Formatter) -> str:
@@ -1202,13 +1183,7 @@ class Cast(Expression):
         super().use()
 
     def needed_for_store(self) -> bool:
-        if not self.reinterpret:
-            # int <-> float casts should be emitted even for stores.
-            return True
-        if not self.expr.type.unify(self.type):
-            # Emit casts when types fail to unify.
-            return True
-        return False
+        return True if not self.reinterpret else not self.expr.type.unify(self.type)
 
     def should_wrap_transparently(self) -> bool:
         return (
@@ -1231,10 +1206,7 @@ class Cast(Expression):
         if fmt.skip_casts:
             return self.expr.format(fmt)
 
-        # Function casts require special logic because function calls have
-        # higher precedence than casts
-        fn_sig = self.type.get_function_pointer_signature()
-        if fn_sig:
+        if fn_sig := self.type.get_function_pointer_signature():
             return f"(({self.type.format(fmt)}) {self.expr.format(fmt)})"
 
         return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
@@ -1286,9 +1258,7 @@ class LocalVar(Expression):
             return fallback_name
 
         name = StructAccess.access_path_to_field_name(self.path, fmt)
-        if name.startswith("->"):
-            return name[2:]
-        return fallback_name
+        return name[2:] if name.startswith("->") else fallback_name
 
     def toplevel_decl(self, fmt: Formatter) -> Optional[str]:
         """Return a declaration for this LocalVar, if required."""
@@ -1594,7 +1564,7 @@ class Literal(Expression):
             if self.type.get_size_bits() == 64:
                 return format_f64_imm(self.value)
             else:
-                return format_f32_imm(self.value) + "f"
+                return f"{format_f32_imm(self.value)}f"
         if self.type.is_pointer() and self.value == 0:
             return "NULL"
 
@@ -1649,9 +1619,7 @@ class AddressOf(Expression):
             # without an explicit `&` by the compiler
             return f"{self.expr.format(fmt)}"
         if isinstance(self.expr, StructAccess):
-            # Simplify `&x[0]` into `x`
-            ref = self.expr.make_reference()
-            if ref:
+            if ref := self.expr.make_reference():
                 return f"{ref.format(fmt)}"
         return f"&{self.expr.format(fmt)}"
 
@@ -1993,9 +1961,7 @@ class EvalOnceStmt(Statement):
             return True
         if not self.expr.var.is_emitted:
             return False
-        if var_for_expr(late_unwrap(self.expr.wrapped_expr)) == self.expr.var:
-            return False
-        return True
+        return var_for_expr(late_unwrap(self.expr.wrapped_expr)) != self.expr.var
 
     def format(self, fmt: Formatter) -> str:
         val = elide_literal_casts(self.expr.wrapped_expr)
@@ -2065,10 +2031,7 @@ class AddressMode:
     rhs: Register
 
     def __str__(self) -> str:
-        if self.offset:
-            return f"{self.offset}({self.rhs})"
-        else:
-            return f"({self.rhs})"
+        return f"{self.offset}({self.rhs})" if self.offset else f"({self.rhs})"
 
 
 @dataclass(frozen=True)
@@ -2225,9 +2188,7 @@ class RegInfo:
         return data.meta if data is not None else None
 
     def get_instruction_lineno(self) -> int:
-        if not self.has_current_instr():
-            return 0
-        return self.current_instr().meta.lineno
+        return 0 if not self.has_current_instr() else self.current_instr().meta.lineno
 
     def __str__(self) -> str:
         return ", ".join(
@@ -2347,8 +2308,7 @@ class InstrArgs:
 
     def full_imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_arg(index))
-        ret = literal_expr(arg, self.stack_info)
-        return ret
+        return literal_expr(arg, self.stack_info)
 
     def imm(self, index: int) -> Expression:
         ret = self.full_imm(index)
@@ -2358,9 +2318,7 @@ class InstrArgs:
 
     def unsigned_imm(self, index: int) -> Expression:
         ret = self.full_imm(index)
-        if isinstance(ret, Literal):
-            return Literal(ret.value & 0xFFFF)
-        return ret
+        return Literal(ret.value & 0xFFFF) if isinstance(ret, Literal) else ret
 
     def hi_imm(self, index: int) -> RawSymbolRef:
         arg = self.raw_arg(index)
@@ -2466,18 +2424,14 @@ def should_wrap_transparently(expr: Expression) -> bool:
         return should_wrap_transparently(expr.expr)
     if isinstance(expr, Cast):
         return expr.should_wrap_transparently()
-    if (
-        isinstance(expr, StructAccess)
-        and isinstance(expr.struct_var, AddressOf)
-        and isinstance(expr.struct_var.expr, GlobalSymbol)
-        and should_wrap_transparently(expr.struct_var.expr)
-    ):
-        # Don't emit temps for reads of globals: they are usually compiler
-        # generated, and prevent_later_var_uses/prevent_later_reads tend to be
-        # good enough at turning wrappers non-transparent when they aren't that
-        # we are fine being a bit liberal here.
-        return True
-    return False
+    return bool(
+        (
+            isinstance(expr, StructAccess)
+            and isinstance(expr.struct_var, AddressOf)
+            and isinstance(expr.struct_var.expr, GlobalSymbol)
+            and should_wrap_transparently(expr.struct_var.expr)
+        )
+    )
 
 
 def is_type_obvious(expr: Expression) -> bool:
@@ -2504,9 +2458,7 @@ def is_type_obvious(expr: Expression) -> bool:
     ):
         return True
     if isinstance(expr, EvalOnceExpr):
-        if expr.uses_var():
-            return True
-        return is_type_obvious(expr.wrapped_expr)
+        return True if expr.uses_var() else is_type_obvious(expr.wrapped_expr)
     return False
 
 
@@ -2664,10 +2616,10 @@ def uses_expr_sub(
     elif isinstance(expr, AddressOf):
         return uses_expr_sub(expr.expr, expr_filter, True, may_move_forward, seen)
     else:
-        for e in expr.dependencies():
-            if uses_expr_sub(e, expr_filter, False, may_move_forward, seen):
-                return True
-        return False
+        return any(
+            uses_expr_sub(e, expr_filter, False, may_move_forward, seen)
+            for e in expr.dependencies()
+        )
 
 
 def uses_expr(
@@ -2803,17 +2755,7 @@ def format_f32_imm(num: int) -> str:
         ret = ("{:." + str(prec) + fmt_char + "}").format(value)
         if fmt_char == "e":
             return ret.replace("e+", "e").replace("e0", "e").replace("e-0", "e-")
-        if "e" in ret:
-            # The "g" format character can sometimes introduce scientific notation if
-            # formatting with too few decimals. If this happens, return an incorrect
-            # value to prevent the result from being used.
-            #
-            # Since the value we are formatting is within (1e-7, 1e7) in absolute
-            # value, it will at least be possible to format with 7 decimals, which is
-            # less than float precision. Thus, this annoying Python limitation won't
-            # lead to us outputting numbers with more precision than we really have.
-            return "0"
-        return ret
+        return "0" if "e" in ret else ret
 
     # 20 decimals is more than enough for a float. Start there, then try to shrink it.
     prec = 20
@@ -3040,8 +2982,9 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
     for n in non_terminal:
         if reg in get_block_info(n).final_register_states.read_inherited:
             for p in n.parents:
-                par_meta = get_block_info(p).final_register_states.get_meta(reg)
-                if par_meta:
+                if par_meta := get_block_info(
+                    p
+                ).final_register_states.get_meta(reg):
                     par_meta.is_read = True
 
     # Propagate `is_read` backwards.
@@ -3061,8 +3004,7 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
     # Start by assuming inherited values are all set; they will get unset iteratively,
     # but for cyclic dependency purposes we want to assume them set.
     for n in non_terminal:
-        meta = get_block_info(n).final_register_states.get_meta(reg)
-        if meta:
+        if meta := get_block_info(n).final_register_states.get_meta(reg):
             if meta.inherited:
                 meta.uninteresting = True
                 meta.function_return = True
@@ -3084,8 +3026,9 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
         all_function_return = True
         all_in_pattern = True
         for p in n.parents:
-            par_meta = get_block_info(p).final_register_states.get_meta(reg)
-            if par_meta:
+            if par_meta := get_block_info(p).final_register_states.get_meta(
+                reg
+            ):
                 all_uninteresting &= par_meta.uninteresting
                 all_function_return &= par_meta.function_return
                 all_in_pattern &= par_meta.in_pattern
@@ -3114,9 +3057,7 @@ def determine_return_register(
             return 2
         if meta.in_pattern:
             return 1
-        if meta.function_return:
-            return 0
-        return 3
+        return 0 if meta.function_return else 3
 
     if not return_blocks:
         return None

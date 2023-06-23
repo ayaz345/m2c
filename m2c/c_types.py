@@ -177,9 +177,7 @@ def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
         return 1
     if "void" in names:
         return 0
-    if names.count("long") == 2:
-        return 8
-    return 4
+    return 8 if names.count("long") == 2 else 4
 
 
 def primitive_range(type: Union[ca.Enum, ca.IdentifierType]) -> Optional[range]:
@@ -191,16 +189,15 @@ def primitive_range(type: Union[ca.Enum, ca.IdentifierType]) -> Optional[range]:
             return None
         if "unsigned" in names:
             signed = False
-    if signed:
-        bits -= 1
-        return range(-(2**bits), 2**bits)
-    else:
+    if not signed:
         return range(0, 2**bits)
+    bits -= 1
+    return range(-(2**bits), 2**bits)
 
 
 def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
     type = resolve_typedefs(type, typemap)
-    if isinstance(type, PtrDecl) or isinstance(type, ArrayDecl):
+    if isinstance(type, (PtrDecl, ArrayDecl)):
         return 4, 4
     assert not isinstance(type, FuncDecl), "Function argument can not be a function"
     inner_type = type.type
@@ -269,9 +266,7 @@ def parse_function(fn: CType) -> Optional[Function]:
             elif isinstance(arg, ca.Decl):
                 params.append(Param(type=type_of_var_decl(arg), name=arg.name))
             elif isinstance(arg, ca.ID):
-                raise DecompFailure(
-                    "K&R-style function header is not supported: " + to_c(fn)
-                )
+                raise DecompFailure(f"K&R-style function header is not supported: {to_c(fn)}")
             else:
                 assert isinstance(arg, ca.Typename)
                 if is_void(arg.type):
@@ -294,10 +289,7 @@ def divmod_towards_zero(lhs: int, rhs: int, op: str) -> int:
         lhs = -lhs
     if lhs < 0:
         return -divmod_towards_zero(-lhs, rhs, op)
-    if op == "/":
-        return lhs // rhs
-    else:
-        return lhs % rhs
+    return lhs // rhs if op == "/" else lhs % rhs
 
 
 def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
@@ -428,8 +420,7 @@ class UndefinedStructError(DecompFailure):
 
 
 def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
-    existing = get_struct(struct, typemap)
-    if existing:
+    if existing := get_struct(struct, typemap):
         return existing
     if struct.decls is None:
         raise UndefinedStructError(
@@ -500,12 +491,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             if type.decls is None:
                 continue
             substruct = parse_struct(type, typemap)
-            if type.name is not None:
-                # Struct defined within another, which is silly but valid C.
-                # parse_struct already makes sure it gets defined in the global
-                # namespace, so no more to do here.
-                pass
-            else:
+            if type.name is None:
                 # C extension: anonymous struct/union, whose members are flattened
                 flush_bitfields()
                 align = max(align, substruct.align)
@@ -617,10 +603,7 @@ def strip_comments(text: str) -> str:
     # https://stackoverflow.com/a/241506
     def replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s.startswith("/"):
-            return " " + "\n" * s.count("\n")
-        else:
-            return s
+        return " " + "\n" * s.count("\n") if s.startswith("/") else s
 
     pattern = re.compile(
         r'//.*?$|/\*.*?\*/|\'(?:\\.|[^\\\'])*\'|"(?:\\.|[^\\"])*"',
@@ -804,10 +787,7 @@ def type_to_string(type: CType, name: str = "") -> str:
         else:
             # (ternary to work around a mypy bug)
             su = "union" if isinstance(type.type, ca.Union) else "enum"
-        if type.type.name:
-            return f"{su} {type.type.name}"
-        else:
-            return f"anon {su}"
+        return f"{su} {type.type.name}" if type.type.name else f"anon {su}"
     decl = ca.Decl(name, [], [], [], [], copy.deepcopy(type), None, None)
     set_decl_name(decl)
     return to_c(decl)

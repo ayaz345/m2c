@@ -124,10 +124,7 @@ def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
     if returncode == 0:
         return out_text
     else:
-        if brief_crashes:
-            return CRASH_STRING
-        else:
-            return f"{CRASH_STRING}\n{out_text}"
+        return CRASH_STRING if brief_crashes else f"{CRASH_STRING}\n{out_text}"
 
 
 def create_e2e_tests(
@@ -137,8 +134,8 @@ def create_e2e_tests(
 
     cases: List[TestCase] = []
     for asm_file in e2e_test_path.glob("*.s"):
-        output_file = asm_file.parent.joinpath(asm_file.stem + "-out.c")
-        flags_path = asm_file.parent.joinpath(asm_file.stem + "-flags.txt")
+        output_file = asm_file.parent.joinpath(f"{asm_file.stem}-out.c")
+        flags_path = asm_file.parent.joinpath(f"{asm_file.stem}-flags.txt")
         name = f"e2e:{asm_file.relative_to(e2e_top_dir)}"
 
         cases.append(
@@ -187,9 +184,7 @@ def find_tests_mm(asm_dir: Path) -> Iterator[List[Path]]:
         data_path = Path(
             str(asm_file).replace("/asm/overlays/", "/data/").replace("/asm/", "/data/")
         ).parent
-        for f in data_path.glob("*.s"):
-            path_list.append(f)
-
+        path_list.extend(iter(data_path.glob("*.s")))
         yield path_list
 
 
@@ -202,9 +197,7 @@ def find_tests_splat(asm_dir: Path) -> Iterator[List[Path]]:
         data_path = Path(
             str(asm_file).replace("/nonmatchings/", "/data/")
         ).parent.parent
-        for f in data_path.glob("*.s"):
-            path_list.append(f)
-
+        path_list.extend(iter(data_path.glob("*.s")))
         yield path_list
 
 
@@ -351,9 +344,7 @@ def main(
         f"Test summary: {passed} passed, {skipped} skipped, {failed} failed, {passed + skipped + failed} total"
     )
 
-    if failed > 0 and not test_options.should_overwrite:
-        return 1
-    return 0
+    return 1 if failed > 0 and not test_options.should_overwrite else 0
 
 
 if __name__ == "__main__":

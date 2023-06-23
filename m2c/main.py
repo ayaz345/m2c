@@ -80,7 +80,7 @@ def run(options: Options) -> int:
             else:
                 with open(filename, "r", encoding="utf-8-sig") as f:
                     asm_file = parse_file(f, arch, options)
-            all_functions.update((fn.name, fn) for fn in asm_file.functions)
+            all_functions |= ((fn.name, fn) for fn in asm_file.functions)
             asm_file.asm_data.merge_into(asm_data)
 
         if options.heuristic_strings:
@@ -149,7 +149,7 @@ def run(options: Options) -> int:
             flow_graphs.append(e)
 
     # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
-    for i in range(options.passes - 1):
+    for _ in range(options.passes - 1):
         preliminary_infos = []
         for function, flow_graph in zip(functions, flow_graphs):
             try:
@@ -195,18 +195,16 @@ def run(options: Options) -> int:
             print(visualize_flowgraph(fn_info.flow_graph, options.visualize_flowgraph))
             return 0
 
-        type_decls = typepool.format_type_declarations(
+        if type_decls := typepool.format_type_declarations(
             fmt, stack_structs=options.print_stack_structs
-        )
-        if type_decls:
+        ):
             print(type_decls)
 
-        global_decls = global_info.global_decls(
+        if global_decls := global_info.global_decls(
             fmt,
             options.global_decls,
             [fn for fn in function_infos if isinstance(fn, FunctionInfo)],
-        )
-        if global_decls:
+        ):
             print(global_decls)
     except Exception as e:
         print_exception_as_comment(

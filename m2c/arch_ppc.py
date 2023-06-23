@@ -230,7 +230,7 @@ class BranchCtrPattern(AsmPattern):
             return Replacement(
                 [
                     AsmInstruction("addi", [ctr, ctr, AsmLiteral(-1)]),
-                    AsmInstruction(instr.mnemonic + ".fictive", instr.args),
+                    AsmInstruction(f"{instr.mnemonic}.fictive", instr.args),
                 ],
                 1,
             )
@@ -667,10 +667,10 @@ class PpcArch(Arch):
 
         if mnemonic == "blr":
             # Return
-            assert len(args) == 0
+            assert not args
             inputs = [Register("lr")]
             is_return = True
-        elif mnemonic in (
+        elif mnemonic in {
             "beqlr",
             "bgelr",
             "bgtlr",
@@ -681,7 +681,7 @@ class PpcArch(Arch):
             "bnllr",
             "bnslr",
             "bsolr",
-        ):
+        }:
             # Conditional return
             # TODO: Support crN argument
             assert len(args) <= 1
@@ -692,7 +692,7 @@ class PpcArch(Arch):
             eval_fn = unreachable_eval
         elif mnemonic == "bctr":
             # Jump table (switch)
-            assert len(args) == 0
+            assert not args
             inputs = [Register("ctr")]
             jump_target = Register("ctr")
             is_conditional = True
@@ -705,9 +705,9 @@ class PpcArch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[0]
             eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
-        elif mnemonic in ("bctrl", "blrl"):
+        elif mnemonic in {"bctrl", "blrl"}:
             # Function call to pointer in special reg ($ctr or $lr)
-            assert len(args) == 0
+            assert not args
             reg = Register(mnemonic[1:-1])
             inputs = list(cls.argument_regs)
             inputs.append(reg)
@@ -857,7 +857,7 @@ class PpcArch(Arch):
                         update_reg, add_imm(update_reg, a.regs[update_reg], offset, a)
                     )
 
-        elif mnemonic in ("stmw", "lmw"):
+        elif mnemonic in {"stmw", "lmw"}:
             assert (
                 len(args) == 2
                 and isinstance(args[0], Register)
@@ -953,7 +953,7 @@ class PpcArch(Arch):
                 eval_fn = lambda s, a: s.set_reg(
                     a.reg_ref(0), cls.instrs_destination_first[mnemonic](a)
                 )
-        elif mnemonic in ("mtctr", "mtlr"):
+        elif mnemonic in {"mtctr", "mtlr"}:
             assert len(args) == 1 and isinstance(args[0], Register)
             dest_reg = Register(mnemonic[2:])
             inputs = [args[0]]
@@ -1341,10 +1341,7 @@ class PpcArch(Arch):
                 param_type = param.type.decay()
                 reg: Optional[Register]
                 try:
-                    if param_type.is_float():
-                        reg = float_regs.pop(0)
-                    else:
-                        reg = intptr_regs.pop(0)
+                    reg = float_regs.pop(0) if param_type.is_float() else intptr_regs.pop(0)
                 except IndexError:
                     # Stack variable
                     reg = None
@@ -1355,18 +1352,18 @@ class PpcArch(Arch):
                 )
             if fn_sig.is_variadic:
                 # TODO: Find a better value to use for `offset`?
-                for reg in intptr_regs:
-                    candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.intptr()
-                        )
+                candidate_slots.extend(
+                    AbiArgSlot(
+                        offset=4 * len(known_slots), reg=reg, type=Type.intptr()
                     )
-                for reg in float_regs:
-                    candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.floatish()
-                        )
+                    for reg in intptr_regs
+                )
+                candidate_slots.extend(
+                    AbiArgSlot(
+                        offset=4 * len(known_slots), reg=reg, type=Type.floatish()
                     )
+                    for reg in float_regs
+                )
         else:
             for ind, reg in enumerate(PpcArch.argument_regs):
                 if reg.register_name[0] != "f":
@@ -1387,11 +1384,7 @@ class PpcArch(Arch):
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
-            if slot == candidate_slots[0]:
-                # For varargs, a subset of regs may be used. Don't check
-                # earlier registers for the first member of that subset.
-                pass
-            else:
+            if slot != candidate_slots[0]:
                 # Only r3-r10/f1-f13 can be used for arguments
                 regname = slot.reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")

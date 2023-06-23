@@ -167,7 +167,7 @@ class RegFormatter:
 
 
 valid_word = string.ascii_letters + string.digits + "_$."
-valid_number = "-xX" + string.hexdigits
+valid_number = f"-xX{string.hexdigits}"
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
@@ -194,8 +194,7 @@ def parse_number(elems: List[str]) -> int:
     number_str = parse_word(elems, valid_number)
     if number_str[0] == "0":
         assert len(number_str) == 1 or number_str[1] in "xX"
-    ret = int(number_str, 0)
-    return ret
+    return int(number_str, 0)
 
 
 def constant_fold(arg: Argument, defines: Dict[str, int]) -> Argument:

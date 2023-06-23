@@ -175,7 +175,7 @@ class ElfFile:
 
         # Parse SHT_REL/SHT_RELA sections (relocations)
         for s, name in zip(sections, sec_names):
-            if s.sh_type == SHT_REL or s.sh_type == SHT_RELA:
+            if s.sh_type in [SHT_REL, SHT_RELA]:
                 sec_name = sec_names[s.sh_info]
                 section = elf.sections.get(sec_name)
                 if section is None:

@@ -76,9 +76,7 @@ class SimpleAsmPattern(AsmPattern):
 
     def match(self, matcher: "AsmMatcher") -> Optional[Replacement]:
         m = matcher.try_match(self.pattern)
-        if not m:
-            return None
-        return self.replace(m)
+        return None if not m else self.replace(m)
 
 
 @dataclass
@@ -248,8 +246,7 @@ def simplify_patterns(
     matcher = AsmMatcher(body)
     while matcher.index < len(matcher.input):
         for pattern in patterns:
-            m = pattern.match(matcher)
-            if m:
+            if m := pattern.match(matcher):
                 matcher.apply(m, arch)
                 break
         else:

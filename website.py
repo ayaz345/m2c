@@ -94,8 +94,7 @@ if "source" in form:
             regvars = "".join(c for c in regvars if c in REG_ALPHABET)
 
     if regvars:
-        cmd.append("--reg-vars")
-        cmd.append(regvars)
+        cmd.extend(("--reg-vars", regvars))
     try:
         if context:
             with tempfile.NamedTemporaryFile() as f:
@@ -124,7 +123,6 @@ if "source" in form:
         raise
     if "visualize" in form and res.returncode == 0:
         print_headers(content_type="image/svg+xml")
-        print(res.stdout.decode("utf-8", "replace"))
     else:
         print_headers(content_type="text/html")
         print("<!DOCTYPE html><html>")
@@ -142,7 +140,7 @@ body {
 """
             )
         print("<body><pre><plaintext>", end="")
-        print(res.stdout.decode("utf-8", "replace"))
+    print(res.stdout.decode("utf-8", "replace"))
 elif "?go" in os.environ.get("REQUEST_URI", ""):
     print_headers(content_type="text/html")
 else:

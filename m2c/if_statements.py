@@ -70,8 +70,7 @@ class IfElseStatement:
                 ]
             )
         if self.else_body is not None and not self.else_body.is_empty():
-            sub_if = self.else_body.get_lone_if_statement()
-            if sub_if:
+            if sub_if := self.else_body.get_lone_if_statement():
                 sub_if_str = sub_if.format(fmt).lstrip()
                 else_str = f"{before_else}else {sub_if_str}"
             else:
@@ -83,14 +82,12 @@ class IfElseStatement:
                             f"{space}}}",
                         ]
                     )
-            if_str = if_str + else_str
+            if_str += else_str
         return if_str
 
 
 def comments_for_switch(index: int) -> List[str]:
-    if index == 0:
-        return []
-    return [f"switch {index}"]
+    return [] if index == 0 else [f"switch {index}"]
 
 
 @dataclass
@@ -120,8 +117,7 @@ class SwitchStatement:
             lines.append(fmt.with_comments(f"{head};", comments))
         else:
             if fmt.coding_style.newline_after_if:
-                lines.append(fmt.with_comments(f"{head}", comments))
-                lines.append(fmt.indent("{"))
+                lines.extend((fmt.with_comments(f"{head}", comments), fmt.indent("{")))
             else:
                 lines.append(fmt.with_comments(f"{head} {{", comments))
             with fmt.indented(fmt.coding_style.switch_indent_level):
@@ -269,11 +265,14 @@ class Body:
         This function is conservative: it only returns True if we're
         *sure* if the control flow won't continue past the Body boundary.
         """
-        for statement in self.statements[::-1]:
-            if not statement.should_write():
-                continue
-            return isinstance(statement, SimpleStatement) and statement.is_jump
-        return False
+        return next(
+            (
+                isinstance(statement, SimpleStatement) and statement.is_jump
+                for statement in self.statements[::-1]
+                if statement.should_write()
+            ),
+            False,
+        )
 
     def get_lone_if_statement(self) -> Optional[IfElseStatement]:
         """If the body consists solely of one IfElseStatement, return it, else None."""
@@ -367,10 +366,7 @@ def rewrite_if_ands(condition: Condition, if_body: "Body") -> IfElseStatement:
 
 
 def label_for_node(context: Context, node: Node) -> str:
-    if node.loop:
-        return f"loop_{node.block.index}"
-    else:
-        return f"block_{node.block.index}"
+    return f"loop_{node.block.index}" if node.loop else f"block_{node.block.index}"
 
 
 def emit_node(context: Context, node: Node, body: Body) -> bool:
@@ -436,14 +432,10 @@ def add_labels_for_switch(
 
     # Mark which labels we need to emit
     for index, target in cases:
-        enum_name = case_type.get_enum_name(index)
-        if enum_name:
+        if enum_name := case_type.get_enum_name(index):
             case_label = f"case {enum_name}"
         elif use_hex:
-            if index < 0:
-                case_label = f"case -0x{-index:X}"
-            else:
-                case_label = f"case 0x{index:X}"
+            case_label = f"case -0x{-index:X}" if index < 0 else f"case 0x{index:X}"
         else:
             case_label = f"case {index}"
 
@@ -534,8 +526,7 @@ def is_empty_goto(node: Node, end: Optional[Node]) -> bool:
 def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
     branch_condition = block_info.branch_condition
     assert branch_condition is not None
-    comma_statements = block_info.statements_to_write()
-    if comma_statements:
+    if comma_statements := block_info.statements_to_write():
         assert not isinstance(branch_condition, CommaConditionExpr)
         return CommaConditionExpr(comma_statements, branch_condition)
     else:
@@ -988,21 +979,14 @@ def build_conditional_subgraph(
         assert isinstance(curr_node, ConditionalNode)
         chained_cond_nodes.append(curr_node)
         curr_node = curr_node.fallthrough_edge
-        if not (
-            # If &&/|| detection is disabled, then limit the condition to one node
-            context.options.andor_detection
-            # Only include ConditionalNodes
-            and isinstance(curr_node, ConditionalNode)
-            # Only include nodes that are postdominated by `end`
-            and end in curr_node.postdominators
-            # Exclude the `end` node
-            and end is not curr_node
-            # Exclude any loop nodes (except `start`)
-            and not curr_node.loop
-            # Exclude nodes with incoming edges that are not part of the condition
-            and all(p in chained_cond_nodes for p in curr_node.parents)
-            # Exclude guards for SwitchNodes (they may be elided)
-            and not switch_guard_expr(curr_node)
+        if (
+            not context.options.andor_detection
+            or not isinstance(curr_node, ConditionalNode)
+            or end not in curr_node.postdominators
+            or end is curr_node
+            or curr_node.loop
+            or any(p not in chained_cond_nodes for p in curr_node.parents)
+            or switch_guard_expr(curr_node)
         ):
             break
 
@@ -1022,17 +1006,17 @@ def build_conditional_subgraph(
     # Mark nodes that may have comma expressions in `cond` as emitted
     context.emitted_nodes.update(chained_cond_nodes[1:])
 
-    # Build the if & else bodies
-    else_body: Optional[Body] = None
     if else_node:
         else_body = build_flowgraph_between(context, else_node, end)
+    else:
+        else_body = None
     if_body = build_flowgraph_between(context, if_node, end)
 
     return IfElseStatement(cond, if_body, else_body)
 
 
 def join_conditions(left: Condition, op: str, right: Condition) -> Condition:
-    assert op in ["&&", "||"]
+    assert op in {"&&", "||"}
     return BinaryOp(left, op, right, type=Type.bool())
 
 
@@ -1200,9 +1184,7 @@ def build_flowgraph_between(
                 assert imm_pdom.immediate_postdominator is not None
                 imm_pdom = imm_pdom.immediate_postdominator
 
-            # Construct the do-while loop
-            do_while_loop = detect_loop(context, curr_start, imm_pdom)
-            if do_while_loop:
+            if do_while_loop := detect_loop(context, curr_start, imm_pdom):
                 body.add_do_while_loop(do_while_loop)
 
                 # Move on.
@@ -1307,7 +1289,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         if (
             cur_index + 1 < len(nodes)
             and nodes[cur_index + 1] == node
-            and not (isinstance(node, ReturnNode) and not node.is_real())
+            and (not isinstance(node, ReturnNode) or node.is_real())
         ):
             # Fallthrough is fine
             return
@@ -1466,9 +1448,9 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
                 type_decl = var.type.to_decl(var.format(fmt), fmt)
                 temp_decls.append(f"{type_decl};")
                 any_decl = True
-        for decl in sorted(temp_decls):
-            function_lines.append(SimpleStatement(decl).format(fmt))
-
+        function_lines.extend(
+            SimpleStatement(decl).format(fmt) for decl in sorted(temp_decls)
+        )
         for phi_var in function_info.stack_info.naive_phi_vars:
             type_decl = phi_var.type.to_decl(phi_var.get_var_name(), fmt)
             function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
@@ -1487,7 +1469,6 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         if any_decl:
             function_lines.append("")
 
-        function_lines.append(formatted_body)
-        function_lines.append("}")
+        function_lines.extend((formatted_body, "}"))
     full_function_text: str = "\n".join(function_lines)
     return full_function_text

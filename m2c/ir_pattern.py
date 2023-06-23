@@ -152,8 +152,7 @@ class IrMatch:
             assert (
                 pat.symbol_name in self.symbolic_args
             ), f"undefined variable in math pattern: {pat.symbol_name}"
-            lit = self.symbolic_args[pat.symbol_name]
-            return lit
+            return self.symbolic_args[pat.symbol_name]
         else:
             assert False, f"bad pattern expr: {pat}"
 
@@ -187,9 +186,7 @@ class IrMatch:
 
     def try_map_ref(self, key: Reference) -> Optional[Reference]:
         refset = self.ref_map.get(key)
-        if refset is None:
-            return None
-        return refset.get_unique()
+        return None if refset is None else refset.get_unique()
 
     def map_location(self, key: Location) -> Location:
         if isinstance(key, Register):
