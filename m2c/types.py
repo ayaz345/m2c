@@ -51,9 +51,7 @@ class TypePool:
         struct = self.structs_by_ctype.get(ctype)
         if struct is not None:
             return struct
-        if ctype.name is not None:
-            return self.structs_by_tag_name.get(ctype.name)
-        return None
+        return None if ctype.name is None else self.structs_by_tag_name.get(ctype.name)
 
     def get_or_create_struct_by_tag_name(
         self,
@@ -329,9 +327,7 @@ class Type:
 
     def get_enum_name(self, value: int) -> Optional[str]:
         data = self.data()
-        if data.enum is None:
-            return None
-        return data.enum.names.get(value)
+        return None if data.enum is None else data.enum.names.get(value)
 
     def get_size_bits(self) -> Optional[int]:
         return self.data().size_bits
@@ -354,9 +350,7 @@ class Type:
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
         data = self.data()
-        if self.is_pointer() and data.ptr_to is not None:
-            return data.ptr_to
-        return None
+        return data.ptr_to if self.is_pointer() and data.ptr_to is not None else None
 
     def reference(self) -> "Type":
         """Return a pointer to self. If self is an array, decay the type to a pointer"""
@@ -377,9 +371,7 @@ class Type:
     def weaken_void_ptr(self) -> "Type":
         """If self is an explicit `void *`, return `Type.ptr()` without an target type."""
         target = self.get_pointer_target()
-        if target is not None and target.is_void():
-            return Type.ptr()
-        return self
+        return Type.ptr() if target is not None and target.is_void() else self
 
     def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
         """If self is an array, return a tuple of the inner Type & the array dimension"""
@@ -503,8 +495,7 @@ class Type:
                 ):
                     return possible_results[-1]
 
-            zero_offset_results = [r for r in possible_results if r[2] == 0]
-            if zero_offset_results:
+            if zero_offset_results := [r for r in possible_results if r[2] == 0]:
                 # Try returning the first field which was at the correct offset,
                 # but has the wrong size
                 return zero_offset_results[0]
@@ -570,11 +561,7 @@ class Type:
         data = self.data()
         if self.is_array():
             assert data.ptr_to is not None
-            if data.array_dim is None:
-                return None
-
-            return [data.ptr_to] * data.array_dim
-
+            return None if data.array_dim is None else [data.ptr_to] * data.array_dim
         if self.is_struct():
             assert data.struct is not None
             if data.struct.has_bitfields:
@@ -1356,13 +1343,7 @@ class StructDeclaration:
                     # Remove `f2` so that accesses to `f2.offset` go through `field` instead.
                     # Defer adding `f2` to `fields_to_remove` until we're done processing `field`.
                     conflicting_fields.append(f2)
-                elif not f2.known and f2.type.is_int() and field.type.is_int():
-                    # Ignore overlapping inferred ints. This can happen when a load & cast is
-                    # implemented with a load of a smaller size. It would be better to detect
-                    # those cases directly; until then, the code is easier to manually fix
-                    # if we leave the overlapping fields.
-                    pass
-                else:
+                elif f2.known or not f2.type.is_int() or not field.type.is_int():
                     # `field` is too big: this usually means that we incorrectly inferred
                     # it to be a (large) struct. Reset its type to something smaller.
                     # Although this is unlikely to produce the correct type for this field,
@@ -1374,11 +1355,7 @@ class StructDeclaration:
                     if offset == 0:
                         # `field` directly overlaps with another, smaller, field, so remove it
                         conflicting_fields = [field]
-                    if offset >= 4:
-                        field.type = Type.any_reg()
-                    else:
-                        field.type = Type.int_of_size(offset * 8)
-
+                    field.type = Type.any_reg() if offset >= 4 else Type.int_of_size(offset * 8)
                     break
             fields_to_remove |= set(conflicting_fields)
         self.fields = [f for f in self.fields if f not in fields_to_remove]
@@ -1397,7 +1374,7 @@ class StructDeclaration:
                 continue
             if struct.tag_name.startswith("__vt__"):
                 name = field.name.replace(self.new_field_prefix, f"vtable{sep}", 1)
-                if not any(f.name == name for f in self.fields):
+                if all(f.name != name for f in self.fields):
                     field.name = name
 
     def format(self, fmt: Formatter) -> str:
@@ -1510,8 +1487,7 @@ class StructDeclaration:
         Return StructDeclaration for a given ctype struct or union, constructing it
         and registering it in the typepool if it does not already exist.
         """
-        existing_struct = typepool.get_struct_for_ctype(ctype)
-        if existing_struct:
+        if existing_struct := typepool.get_struct_for_ctype(ctype):
             return existing_struct
 
         typedef_name: Optional[str] = None

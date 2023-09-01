@@ -127,7 +127,7 @@ class Block:
 
     def __str__(self) -> str:
         name = f"{self.index} ({self.approx_label_name})"
-        inst_str = "\n".join("    " + str(instr) for instr in self.instructions)
+        inst_str = "\n".join(f"    {str(instr)}" for instr in self.instructions)
         return f"# {name}\n{inst_str}\n"
 
 
@@ -318,10 +318,7 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
                 and before_before_target is not None
                 and before_before_target.has_delay_slot
             ):
-                # Don't treat 'b' instructions as branch likelies if doing so would
-                # introduce a label in a delay slot.
-                new_body.append((item, item))
-                new_body.append((next_item, next_item))
+                new_body.extend(((item, item), (next_item, next_item)))
             elif (
                 isinstance(next_item, Instruction)
                 and before_target is not None
@@ -340,12 +337,9 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
                     mn_unlikely, item.args[:-1] + [new_target], item.meta.derived()
                 )
                 next_item = arch.parse("nop", [], item.meta.derived())
-                new_body.append((orig_item, item))
-                new_body.append((orig_next_item, next_item))
+                new_body.extend(((orig_item, item), (orig_next_item, next_item)))
             else:
-                # Fall back to not transforming the branch likely at all.
-                new_body.append((item, item))
-                new_body.append((next_item, next_item))
+                new_body.extend(((item, item), (next_item, next_item)))
         else:
             new_body.append((orig_item, item))
 
@@ -792,9 +786,9 @@ def build_graph_from_block(
 
     # Extract branching instructions from this block.
     jumps: List[Instruction] = [inst for inst in block.instructions if inst.is_jump()]
-    assert len(jumps) in [0, 1], "too many jump instructions in one block"
+    assert len(jumps) in {0, 1}, "too many jump instructions in one block"
 
-    if len(jumps) == 0:
+    if not jumps:
         # No jumps, i.e. the next block is this node's successor block.
         new_node = BasicNode(block, False, dummy_node)
         nodes.append(new_node)
@@ -959,8 +953,7 @@ def build_nodes(
 
 
 def warn_on_safeguard_use(nodes: List[Node], arch: ArchFlowGraph) -> None:
-    node = next((node for node in nodes if node.block.is_safeguard), None)
-    if node:
+    if node := next((node for node in nodes if node.block.is_safeguard), None):
         label = node.block.approx_label_name
         return_instrs = arch.missing_return()
         print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
@@ -980,17 +973,7 @@ def is_premature_return(
         # Only trivial return blocks can be used for premature returns,
         # hopefully.
         return False
-    if not isinstance(node, BasicNode):
-        # We only treat BasicNode's as being able to return early right now.
-        # (Handling ConditionalNode's seems to cause assertion failures --
-        # might need changes to build_flowgraph_between.)
-        return False
-    # The only node that is allowed to point to the return node is the node
-    # before it in the flow graph list. (You'd think it would be the node
-    # with index = return_node.index - 1, but that's not necessarily the
-    # case -- some functions have a dead antepenultimate block with a
-    # superfluous unreachable return.)
-    return node != antepenultimate_node
+    return node != antepenultimate_node if isinstance(node, BasicNode) else False
 
 
 def duplicate_premature_returns(nodes: List[Node], arch: ArchFlowGraph) -> List[Node]:
@@ -1185,9 +1168,7 @@ class RefSet:
         return not self
 
     def get_unique(self) -> Optional[Reference]:
-        if len(self.refs) == 1:
-            return self.refs[0]
-        return None
+        return self.refs[0] if len(self.refs) == 1 else None
 
     def add(self, ref: Reference) -> None:
         if ref not in self.refs:
@@ -1247,7 +1228,7 @@ class LocationRefSetDict:
         return self.refs.items()
 
     def is_empty(self) -> bool:
-        return all(not v for v in self.refs.values())
+        return not any(self.refs.values())
 
     def __contains__(self, key: Location) -> bool:
         return bool(self.get(key))
@@ -1323,7 +1304,7 @@ class FlowGraph:
                 if not incoming_edges[s]:
                     queue.add(s)
 
-        if any(v for v in incoming_edges.values()):
+        if any(incoming_edges.values()):
             # There are remaining edges: the graph has at least one cycle
             return False
         if len(seen) != len(self.nodes):
@@ -1340,10 +1321,7 @@ class FlowGraph:
             seen.add(n)
             queue.update(set(n.parents) - seen)
 
-        if len(seen) != len(self.nodes):
-            # Not all nodes can reach the terminal node
-            return False
-        return True
+        return len(seen) == len(self.nodes)
 
     def reset_block_info(self) -> None:
         for node in self.nodes:

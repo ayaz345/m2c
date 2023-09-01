@@ -107,8 +107,7 @@ def as_stringio(src: str) -> Iterator[StringIO]:
     """Wrap `src` in a `StringIO`, and assert it was fully consumed at the end of the context"""
     buf = StringIO(src)
     yield buf
-    leftover = buf.read()
-    if leftover:
+    if leftover := buf.read():
         raise ValueError(f"Unable to parse full input, leftover chars: {leftover!r}")
 
 
@@ -284,9 +283,7 @@ class CxxTerm:
         kind = CxxTerm.Kind(read_exact(src, 1))
         if kind == CxxTerm.Kind.QUALIFIED:
             count = int(read_exact(src, 1))
-            qualified_name = []
-            for _ in range(count):
-                qualified_name.append(CxxName.parse(src))
+            qualified_name = [CxxName.parse(src) for _ in range(count)]
             return CxxTerm(kind=kind, qualified_name=qualified_name)
 
         if kind == CxxTerm.Kind.FUNCTION:
@@ -329,7 +326,7 @@ class CxxTerm:
             assert self.qualified_name is not None
             names = [str(q) for q in self.qualified_name]
             if names[-1] in CxxTerm.OPS:
-                names[-1] = "operator" + CxxTerm.OPS[names[-1]]
+                names[-1] = f"operator{CxxTerm.OPS[names[-1]]}"
             elif names[-1] == "__ct":
                 assert len(names) >= 2
                 names[-1] = names[-2]
@@ -340,9 +337,7 @@ class CxxTerm:
 
         if self.kind == CxxTerm.Kind.FUNCTION:
             assert self.function_params is not None
-            prefix = ""
-            if self.function_return is not None:
-                prefix = f"{self.function_return} (*) "
+            prefix = "" if self.function_return is None else f"{self.function_return} (*) "
             args = ", ".join(str(p) for p in self.function_params)
             return f"{prefix}({args})"
 

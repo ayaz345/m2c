@@ -126,11 +126,12 @@ def deref(
 
 def condition_from_expr(expr: Expression) -> Condition:
     uw_expr = early_unwrap(expr)
-    if isinstance(uw_expr, Condition) and not (
-        isinstance(uw_expr, BinaryOp) and not uw_expr.is_comparison()
-    ):
-        return uw_expr
-    return ExprCondition(expr, type=expr.type)
+    return (
+        uw_expr
+        if isinstance(uw_expr, Condition)
+        and (not isinstance(uw_expr, BinaryOp) or uw_expr.is_comparison())
+        else ExprCondition(expr, type=expr.type)
+    )
 
 
 def imm_add_32(expr: Expression) -> Expression:
@@ -286,19 +287,18 @@ def handle_addi_real(
     args: InstrArgs,
 ) -> Expression:
     stack_info = args.stack_info
-    if source_reg is not None and stack_info.is_stack_reg(source_reg):
-        # Adding to sp, i.e. passing an address.
-        assert isinstance(imm, Literal)
-        if stack_info.is_stack_reg(output_reg):
-            # Changing sp. Just ignore that.
-            return source
-        # Keep track of all local variables that we take addresses of.
-        var = stack_info.get_stack_var(imm.value, store=False)
-        if isinstance(var, LocalVar):
-            stack_info.add_local_var(var)
-        return AddressOf(var, type=var.type.reference())
-    else:
+    if source_reg is None or not stack_info.is_stack_reg(source_reg):
         return add_imm(output_reg, source, imm, args)
+    # Adding to sp, i.e. passing an address.
+    assert isinstance(imm, Literal)
+    if stack_info.is_stack_reg(output_reg):
+        # Changing sp. Just ignore that.
+        return source
+    # Keep track of all local variables that we take addresses of.
+    var = stack_info.get_stack_var(imm.value, store=False)
+    if isinstance(var, LocalVar):
+        stack_info.add_local_var(var)
+    return AddressOf(var, type=var.type.reference())
 
 
 def add_imm(
@@ -340,8 +340,7 @@ def add_imm(
                     type=field_type.reference(),
                 )
         if isinstance(imm, Literal):
-            target = source.type.get_pointer_target()
-            if target:
+            if target := source.type.get_pointer_target():
                 target_size = target.get_size_bytes()
                 if target_size and imm.value % target_size == 0:
                     # Pointer addition.
@@ -383,10 +382,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             ):
                 data = ent.data[0][:size]
                 val: int
-                if size == 4:
-                    (val,) = struct.unpack(">I", data)
-                else:
-                    (val,) = struct.unpack(">Q", data)
+                (val,) = struct.unpack(">I", data) if size == 4 else struct.unpack(">Q", data)
                 return Literal(value=val, type=type)
 
     return as_type(expr, type, silent=True)
@@ -728,9 +724,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         if y <= 1:
             return None
         result = round(x / y)
-        if x / (y + 1) <= result <= x / (y - 1):
-            return result
-        return None
+        return result if x / (y + 1) <= result <= x / (y - 1) else None
 
     if expr.op in mult_high_ops and isinstance(right_expr, Literal):
         denom = round_div(1 << (32 + divisor_shift), right_expr.value)
@@ -928,10 +922,7 @@ def array_access_from_add(
             # This acts as a backup, and will usually succeed
             target_type.unify(inner_type)
 
-    if target_type.get_size_bytes() == scale:
-        # base[index]
-        pass
-    else:
+    if target_type.get_size_bytes() != scale:
         # base->subarray[index]
         sub_path, sub_type, remaining_offset = base.type.get_deref_field(
             offset, target_size=scale, exact=False
@@ -1014,9 +1005,7 @@ def handle_add_real(
     if folded_expr is not expr:
         return folded_expr
     array_expr = array_access_from_add(expr, 0, stack_info, target_size=None, ptr=True)
-    if array_expr is not None:
-        return array_expr
-    return expr
+    return array_expr if array_expr is not None else expr
 
 
 def handle_add_float(args: InstrArgs) -> Expression:
@@ -1059,13 +1048,11 @@ def rlwi_mask(mask_begin: int, mask_end: int) -> int:
     # Bit 0 is the MSB, Bit 31 is the LSB
     bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
     all_ones = 0xFFFFFFFF
-    if mask_begin <= mask_end:
-        # Set bits inside the range, fully inclusive
-        mask = bits_upto(mask_begin) - bits_upto(mask_end + 1)
-    else:
-        # Set bits from [31, mask_end] and [mask_begin, 0]
-        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ all_ones
-    return mask
+    return (
+        bits_upto(mask_begin) - bits_upto(mask_end + 1)
+        if mask_begin <= mask_end
+        else (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ all_ones
+    )
 
 
 def handle_rlwinm(

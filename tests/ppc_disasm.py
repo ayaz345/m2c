@@ -104,7 +104,7 @@ def address_label(addr: int) -> str:
 # Returns true if the instruction is a load or store with the given register as a base
 def is_load_store_reg_offset(insn: cs.CsInsn, reg: Optional[CsRegister]) -> bool:
     return insn.id in LOAD_STORE_MNEMONICS and (
-        reg == None or insn.operands[1].mem.base == reg
+        reg is None or insn.operands[1].mem.base == reg
     )
 
 
@@ -127,43 +127,24 @@ def instruction_to_text(
     elif insn.operands:
         label_addr = insn.operands[0].imm
         symbol = section.symbols.get(label_addr)
-        if symbol is not None:
-            label = symbol_name(symbol)
-        else:
-            label = address_label(label_addr)
-
+        label = address_label(label_addr) if symbol is None else symbol_name(symbol)
     # Probably data, not a real instruction
     if insn.id == cs.ppc.PPC_INS_BDNZ and (insn.bytes[0] & 1):
         return None
     if insn.id in BRANCH_MNEMONICS:
         if not label:
-            return "%s %s" % (
-                insn.mnemonic,
-                f"unk label: {(raw, insn.address - section.address)}",
-            )
-            return None
-        return "%s %s" % (insn.mnemonic, label)
+            return f"{insn.mnemonic} unk label: {(raw, insn.address - section.address)}"
+        return f"{insn.mnemonic} {label}"
     elif insn.id == cs.ppc.PPC_INS_BC:
         branchPred = "+" if (insn.bytes[1] & 0x20) else ""
         if not insn.operands:
             pass
         elif insn.operands[0].type == cs.ppc.PPC_OP_IMM:
-            if not label:
-                return None
-            return "%s%s %s" % (
-                insn.mnemonic,
-                branchPred,
-                label,
-            )
+            return None if not label else f"{insn.mnemonic}{branchPred} {label}"
         elif insn.operands[1].type == cs.ppc.PPC_OP_IMM:
             if not label:
                 return None
-            return "%s%s %s, %s" % (
-                insn.mnemonic,
-                branchPred,
-                insn.reg_name(insn.operands[0].value.reg),
-                label,
-            )
+            return f"{insn.mnemonic}{branchPred} {insn.reg_name(insn.operands[0].value.reg)}, {label}"
     if reloc is not None:
         assert label is not None
         # r13 offset loads
@@ -171,21 +152,11 @@ def instruction_to_text(
             insn.id == cs.ppc.PPC_INS_ADDI
             and insn.operands[1].reg == cs.ppc.PPC_REG_R13
         ):
-            return "%s %s, %s, %s@sda21" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].reg),
-                insn.reg_name(insn.operands[1].reg),
-                label,
-            )
+            return f"{insn.mnemonic} {insn.reg_name(insn.operands[0].reg)}, {insn.reg_name(insn.operands[1].reg)}, {label}@sda21"
 
         # r2 offset loads
         if insn.id == cs.ppc.PPC_INS_ADDI and insn.operands[1].reg == cs.ppc.PPC_REG_R2:
-            return "%s %s, %s, %s@sda2" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].reg),
-                insn.reg_name(insn.operands[1].reg),
-                label,
-            )
+            return f"{insn.mnemonic} {insn.reg_name(insn.operands[0].reg)}, {insn.reg_name(insn.operands[1].reg)}, {label}@sda2"
 
         # Reloc R_PPC_EMB_SDA21, the linker sets the register to either
         # $r13 or $r2 based on the section name.
@@ -197,43 +168,19 @@ def instruction_to_text(
             else:
                 reg = "r2"
             if insn.id == cs.ppc.PPC_INS_LI:
-                return "addi %s, %s, %s@sda21" % (
-                    insn.reg_name(insn.operands[0].value.reg),
-                    reg,
-                    label,
-                )
+                return f"addi {insn.reg_name(insn.operands[0].value.reg)}, {reg}, {label}@sda21"
             else:
-                return "%s %s, %s@sda21(%s)" % (
-                    insn.mnemonic,
-                    insn.reg_name(insn.operands[0].value.reg),
-                    label,
-                    reg,
-                )
+                return f"{insn.mnemonic} {insn.reg_name(insn.operands[0].value.reg)}, {label}@sda21({reg})"
 
         # Handle split loads (high part)
         if insn.id == cs.ppc.PPC_INS_LIS:
             suffix = "h" if reloc.relocation_type == 5 else "ha"
-            return "%s %s, %s@%s" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].reg),
-                label,
-                suffix,
-            )
+            return f"{insn.mnemonic} {insn.reg_name(insn.operands[0].reg)}, {label}@{suffix}"
         # Handle split loads (low part)
         if insn.id in {cs.ppc.PPC_INS_ADDI, cs.ppc.PPC_INS_ORI}:
-            return "%s %s, %s, %s@l" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].reg),
-                insn.reg_name(insn.operands[1].reg),
-                label,
-            )
+            return f"{insn.mnemonic} {insn.reg_name(insn.operands[0].reg)}, {insn.reg_name(insn.operands[1].reg)}, {label}@l"
         if is_load_store_reg_offset(insn, None):
-            return "%s %s, %s@l(%s)" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].reg),
-                label,
-                insn.reg_name(insn.operands[1].mem.base),
-            )
+            return f"{insn.mnemonic} {insn.reg_name(insn.operands[0].reg)}, {label}@l({insn.reg_name(insn.operands[1].mem.base)})"
 
     # Sign-extend immediate values (Capstone doesn't do that automatically)
     if insn.id in {
@@ -248,23 +195,22 @@ def instruction_to_text(
             insn.reg_name(insn.operands[1].value.reg),
             insn.operands[2].imm - 0x10000,
         )
-    elif (insn.id == cs.ppc.PPC_INS_LI or insn.id == cs.ppc.PPC_INS_CMPWI) and (
-        insn.operands[1].imm & 0x8000
+    elif (
+        insn.id in [cs.ppc.PPC_INS_LI, cs.ppc.PPC_INS_CMPWI]
+        and insn.operands[1].imm & 0x8000
     ):
         return "%s %s, %i" % (
             insn.mnemonic,
             insn.reg_name(insn.operands[0].reg),
             insn.operands[1].imm - 0x10000,
         )
-    # cntlz -> cntlzw
     elif insn.id == cs.ppc.PPC_INS_CNTLZW:
-        return "cntlzw %s" % insn.op_str
+        return f"cntlzw {insn.op_str}"
     elif insn.id == cs.ppc.PPC_INS_MTICCR:
-        return "mtictc %s" % insn.op_str
-    # Dunno why GNU assembler doesn't accept this
+        return f"mtictc {insn.op_str}"
     elif insn.id == cs.ppc.PPC_INS_LMW and insn.operands[0].reg == cs.ppc.PPC_REG_R0:
         return ".4byte 0x%08X  /* illegal %s %s */" % (raw, insn.mnemonic, insn.op_str)
-    return "%s %s" % (insn.mnemonic, insn.op_str)
+    return f"{insn.mnemonic} {insn.op_str}"
 
 
 def disasm_ps(inst: int) -> Optional[str]:

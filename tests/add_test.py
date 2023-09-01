@@ -36,7 +36,7 @@ def get_environment_variables() -> PathsToBinaries:
             return None
         path = Path(env_var)
         if not path.exists():
-            logger.error(error_message + " (path does not exist)")
+            logger.error(f"{error_message} (path does not exist)")
             return None
         return path
 
@@ -184,12 +184,12 @@ def add_test_from_file(
 ) -> None:
     test_dir = orig_file.parent
     for asm_filename, compiler in compilers:
-        asm_file_path = test_dir / (asm_filename + ".s")
+        asm_file_path = test_dir / f"{asm_filename}.s"
         try:
             run_compile(orig_file, asm_file_path, compiler)
             if compiler.name == "mwcc":
                 # If the flags file doesn't exist, initialize it with the correct --target
-                ppc_flags = test_dir / (asm_filename + "-flags.txt")
+                ppc_flags = test_dir / f"{asm_filename}-flags.txt"
                 if not ppc_flags.exists():
                     ppc_flags.write_text("--target ppc-mwcc-c\n")
         except Exception:
@@ -230,7 +230,7 @@ def main() -> int:
             Path(__file__).parent / "end_to_end" / orig_file.parent.name / "orig.c"
         ).resolve()
         expected_cpp_file = expected_c_file.with_suffix(".cpp")
-        if orig_file != expected_c_file and orig_file != expected_cpp_file:
+        if orig_file not in [expected_c_file, expected_cpp_file]:
             logger.error(
                 f"`{orig_file}` does not have a path of the form `{expected_c_file}` or `{expected_cpp_file}`! Skipping."
             )

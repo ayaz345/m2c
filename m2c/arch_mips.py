@@ -522,12 +522,10 @@ class MemcpyPatternBase(AsmPattern):
         # isn't a multiple of three. (This doesn't really work well at the moment,
         # see the comment in AlignedMemcpyPattern...)
         added_length = length
-        m2 = matcher.try_match(pattern + self.epilogue1)
-        if m2:
+        if m2 := matcher.try_match(pattern + self.epilogue1):
             m = m2
             length += 4
-            m3 = matcher.try_match(pattern + self.epilogue1 + self.epilogue2)
-            if m3:
+            if m3 := matcher.try_match(pattern + self.epilogue1 + self.epilogue2):
                 m = m3
                 length += 4
 
@@ -854,7 +852,7 @@ class MipsArch(Arch):
             if instr.mnemonic in ["bne", "beq", "beql", "bnel"] and args[1] == Register(
                 "zero"
             ):
-                mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
+                mn = f"{instr.mnemonic[:3]}z{instr.mnemonic[3:]}"
                 return AsmInstruction(mn, [args[0], args[2]])
         if len(args) == 2:
             if instr.mnemonic == "beqz" and args[0] == Register("zero"):
